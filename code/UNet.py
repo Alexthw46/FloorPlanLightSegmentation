@@ -3,7 +3,7 @@ from tensorflow import keras
 
 
 def make_U_model(img_size, num_classes):
-    inputs = keras.Input(shape=img_size + (3,))
+    inputs = keras.Input(shape=img_size + (4,))
 
     x = inputs   # TF bug on data augmentation
     # x = layers.RandomRotation(factor=0.15)(inputs)

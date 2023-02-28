@@ -2,6 +2,7 @@ import os
 import random
 
 import numpy as np
+import albumentations as abm
 from PIL import Image
 from keras.utils import load_img, Sequence
 
@@ -23,9 +24,9 @@ class DataGen(Sequence):
         i = idx * self.batch_size
         batch_input_img_paths = self.input_img_paths[i: i + self.batch_size]
         batch_target_img_paths = self.target_img_paths[i: i + self.batch_size]
-        x = np.zeros((self.batch_size,) + self.img_size + (3,), dtype="float32")
+        x = np.zeros((self.batch_size,) + self.img_size + (4,), dtype="float32")
         for j, path in enumerate(batch_input_img_paths):
-            img = load_img(path, target_size=self.img_size)
+            img = load_img(path, target_size=self.img_size, color_mode='rgba')
             x[j] = img
         y = np.zeros((self.batch_size,) + self.img_size + (1,), dtype="uint8")
         for j, path in enumerate(batch_target_img_paths):
@@ -33,7 +34,14 @@ class DataGen(Sequence):
             y[j] = np.expand_dims(img, 2)
             # Ground truth labels are 1, 2, 3, 4. Subtract to get 0, 1, 2, 3:
             y[j] -= 1
-        return x, y
+
+        augmentation = abm.Compose([
+            abm.RandomCrop(width=256, height=256),
+            abm.HorizontalFlip(p=0.5),
+            abm.RandomBrightnessContrast(p=0.2),
+        ])
+        trasformed = augmentation(image=x, mask=y)
+        return trasformed['image'], trasformed['mask']
 
 
 def makeGens(input_img_paths, target_img_paths, batch_size, img_size, val_split=0.2):
@@ -50,7 +58,7 @@ def makeGens(input_img_paths, target_img_paths, batch_size, img_size, val_split=
 
     # Instantiate data Sequences for each split
     train_gen = DataGen(
-        batch_size, img_size, train_input_img_paths, train_target_img_paths
+        batch_size, img_size, train_input_img_paths, train_target_img_paths,
     )
     val_gen = DataGen(batch_size, img_size, val_input_img_paths, val_target_img_paths)
 
@@ -63,6 +71,7 @@ def imageToMap(in_path, out_path, filename):
     image = Image.open(os.path.join(in_path, filename))
     bg = Image.new('RGBA', (800, 800), color=(0, 0, 0, 0))
     bg.paste(image, None, image)
+
     newImage = bg.convert('LA')
     pixdata = newImage.load()
 
@@ -74,8 +83,8 @@ def imageToMap(in_path, out_path, filename):
             elif pixdata[x, y][0] == 0:
                 pixdata[x, y] = (2, 255)
             elif pixdata[x, y][0] == 255:
-                pixdata[x, y] = (4, 255)
-            else:
                 pixdata[x, y] = (3, 255)
+            else:
+                pixdata[x, y] = (4, 255)
 
     newImage.save(out_path + filename)
