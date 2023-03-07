@@ -16,26 +16,21 @@ from UNet import make_U_model
 # Configure the model for training.
 # We use the "sparse" version of categorical-crossentropy because our target data is integers.
 def train(model: keras.Model, train_gen: preprocessing.DataGen, val_gen: preprocessing.DataGen,
-          epochs: int = 15) -> None:
+          epochs: int = 25) -> None:
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=1e-4, clipnorm=0.001), loss="sparse_categorical_crossentropy",
-                  metrics=[keras.metrics.SparseCategoricalCrossentropy(name="no_bg", ignore_class=0)])
+                  metrics=["accuracy", keras.metrics.SparseCategoricalCrossentropy(name="no_bg", ignore_class=0)])
 
     callbacks = [
         keras.callbacks.TensorBoard(log_dir="tensorboard"),
-        keras.callbacks.EarlyStopping(monitor='no_bg',
-                                      min_delta=0.001,
-                                      patience=5,
-                                      mode='min',
-                                      verbose=1),
         keras.callbacks.ModelCheckpoint("segmentation.h5", save_best_only=True),
         keras.callbacks.ReduceLROnPlateau(
             monitor='loss',
             factor=0.1,
-            patience=3,
+            patience=10,
             verbose=1,
             mode='min',
-            min_delta=0.01,
-            cooldown=0,
+            min_delta=0.001,
+            cooldown=3,
             min_lr=0
         )
     ]
@@ -83,7 +78,7 @@ def init(args):
     if exists("./segmentation.h5"):
         model.load_weights("./segmentation.h5")
 
-    train_gen, val_gen, val_paths = preprocessing.makeGens(input_img_paths, target_img_paths, batch_size, img_size, aug=args.train)
+    train_gen, val_gen, val_paths = preprocessing.makeGens(input_img_paths, target_img_paths, batch_size, img_size, aug=args.augm)
     if args.train:
         model.summary()
         train(model, train_gen, val_gen, epochs=args.epochs)
@@ -124,5 +119,12 @@ if __name__ == '__main__':
         metavar="epochs",
         default=15,
         help="Number of epochs",
+    )
+    parser.add_argument(
+        "--augmentation",
+        type=bool,
+        metavar="dataugmentation",
+        default=False,
+        help="Toggle pipeline augmentation",
     )
     init(parser.parse_args())
