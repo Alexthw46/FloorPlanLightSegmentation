@@ -31,9 +31,9 @@ class DataGen(Sequence):
         i = idx * self.batch_size
         batch_input_img_paths = self.input_img_paths[i: i + self.batch_size]
         batch_target_img_paths = self.target_img_paths[i: i + self.batch_size]
-        x = np.zeros((self.batch_size,) + self.img_size + (4,), dtype="float32")
+        x = np.zeros((self.batch_size,) + self.img_size + (3,), dtype="float32")
         for j, path in enumerate(batch_input_img_paths):
-            img = load_img(path, target_size=self.img_size, color_mode='rgba')
+            img = load_img(path, target_size=self.img_size, color_mode='rgb')
             x[j] = img
         y = np.zeros((self.batch_size,) + self.img_size + (1,), dtype="uint8")
         for j, path in enumerate(batch_target_img_paths):
@@ -69,11 +69,6 @@ def makeGens(input_img_paths, target_img_paths, batch_size, img_size, val_split=
 
 
 def pregenDataAugm(input_img_filenames, target_img_filenames, in_path, tg_path):
-    augmentation = abm.Compose([
-        abm.RandomRotate90(p=0.3),
-        abm.HorizontalFlip(p=0.3),
-        abm.VerticalFlip(p=0.3)
-    ])
     counter = len(input_img_filenames)
     for input, target in zip(input_img_filenames, target_img_filenames):
         image = load_img(os.path.join(in_path, input), target_size=(800, 800), color_mode='rgba')

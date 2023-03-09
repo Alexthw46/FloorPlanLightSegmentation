@@ -11,6 +11,7 @@ from tensorflow import keras
 import filter
 import preprocessing
 from UNet import make_U_model
+from code_py import MobileNet
 
 
 # Configure the model for training.
@@ -18,7 +19,7 @@ from UNet import make_U_model
 def train(model: keras.Model, train_gen: preprocessing.DataGen, val_gen: preprocessing.DataGen,
           epochs: int = 25) -> None:
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=1e-4, clipnorm=0.001), loss="sparse_categorical_crossentropy",
-                  metrics=["accuracy", keras.metrics.SparseCategoricalCrossentropy(name="no_bg", ignore_class=0)])
+                  metrics=[keras.metrics.SparseCategoricalAccuracy(), keras.metrics.SparseCategoricalCrossentropy(name="no_bg", ignore_class=0)])
 
     callbacks = [
         keras.callbacks.TensorBoard(log_dir="tensorboard"),
@@ -26,7 +27,7 @@ def train(model: keras.Model, train_gen: preprocessing.DataGen, val_gen: preproc
         keras.callbacks.ReduceLROnPlateau(
             monitor='loss',
             factor=0.1,
-            patience=10,
+            patience=5,
             verbose=1,
             mode='min',
             min_delta=0.001,
@@ -75,10 +76,12 @@ def init(args):
 
     # Build model
     model = make_U_model(img_size, num_classes)
-    if exists("./segmentation.h5"):
-        model.load_weights("./segmentation.h5")
+    model = MobileNet.make_Mobile(img_size, num_classes)
+    weight_name = "./segmentation_mobile_u.h5"
+    if exists(weight_name):
+        model.load_weights(weight_name)
 
-    train_gen, val_gen, val_paths = preprocessing.makeGens(input_img_paths, target_img_paths, batch_size, img_size, aug=args.augm)
+    train_gen, val_gen, val_paths = preprocessing.makeGens(input_img_paths, target_img_paths, batch_size, img_size, aug=args.augmentation)
     if args.train:
         model.summary()
         train(model, train_gen, val_gen, epochs=args.epochs)

@@ -5,9 +5,7 @@ from keras import layers
 def make_U_model(img_size, num_classes):
     inputs = keras.Input(shape=img_size + (4,))
 
-    x = inputs  # TF bug on data augmentation
-    # x = layers.RandomRotation(factor=0.15)(inputs)
-    # x = layers.RandomFlip()(x)
+    x = inputs
 
     # [First half of the network: downsampling inputs] #
 
@@ -56,7 +54,6 @@ def make_U_model(img_size, num_classes):
         x = layers.add([x, residual])  # Add back residual
         previous_block_activation = x  # Set aside next residual
 
-    x = layers.Dropout(0.5)(x)
     # Add a per-pixel classification layer
     outputs = layers.Conv2D(num_classes, 3, activation="softmax", padding="same")(x)
 
