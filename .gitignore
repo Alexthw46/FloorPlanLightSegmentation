@@ -159,3 +159,9 @@ cython_debug/
 /tensorboard/
 /model_plot.png
 /model_plot_notop.png
+/tensorboard_scc_unet_mobilenet/train/events.out.tfevents.1680698996.PC-ALE.692.0.v2
+/tensorboard_scc_unet_mobilenet/train/events.out.tfevents.1680701291.PC-ALE.18404.0.v2
+/tensorboard_scc_unet_mobilenet/train/events.out.tfevents.1680701467.PC-ALE.11992.0.v2
+/tensorboard_scc_unet_mobilenet/train/events.out.tfevents.1680702615.PC-ALE.13840.0.v2
+/tensorboard_dc_unet_mobilenet/train/events.out.tfevents.1682068629.PC-ALE.2964.0.v2
+/resnet50_coco_best_v2.1.0.h5

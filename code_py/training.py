@@ -2,6 +2,8 @@ import argparse
 import os
 from os.path import exists
 
+from code_py import DeepLab
+
 os.environ["SM_FRAMEWORK"] = "tf.keras"
 import numpy as np
 from PIL import Image
@@ -10,7 +12,6 @@ from keras.utils import load_img
 import tensorflow as tf
 from tensorflow import keras
 import segmentation_models as sm
-import focal_loss as fc
 
 import filter
 import preprocessing
@@ -44,7 +45,7 @@ def train(model: keras.Model, args, train_gen: preprocessing.DataGen, val_gen: p
                   metrics=[
                       keras.metrics.IoU(name="iou", num_classes=4, target_class_ids=[0, 1, 2], sparse_y_pred=False),
                       keras.metrics.IoU(name="iou_lights", num_classes=4, target_class_ids=[3], sparse_y_pred=False)
-                      ], jit_compile=False)
+                  ], jit_compile=False)
 
     callbacks = [
         keras.callbacks.TensorBoard(log_dir="tensorboard_dc_" + args.decoder + "_" + args.backbone),
@@ -92,7 +93,7 @@ def init(args):
     out_dir = './images/train_result_dc_' + args.decoder + '_' + args.backbone + '/'
     img_size = (512, 512)
     num_classes = 4
-    batch_size = 10
+    batch_size = 2
     input_img_paths, target_img_paths = filter.load_dataset_images(data_dir)
 
     print("Number of samples:", len(input_img_paths[0]))
@@ -114,6 +115,8 @@ def init(args):
         elif args.decoder == "psp":
             model = sm.PSPNet(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax',
                               psp_dropout=0.5)
+        elif args.decoder == "deeplab":
+            model = DeepLab.DeeplabV3Plus(image_size=img_size[0], num_classes=4)
         else:
             model = sm.Unet(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax')
             '''base_model_input = model.input base_model_output = model.get_layer('decoder_stage4b_relu').output #add 
