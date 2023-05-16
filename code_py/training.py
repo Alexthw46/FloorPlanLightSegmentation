@@ -12,8 +12,7 @@ from keras.utils import load_img
 import tensorflow as tf
 from tensorflow import keras
 import segmentation_models as sm
-
-import filter
+import focal_loss as fc
 import preprocessing
 import UNet
 
@@ -23,7 +22,7 @@ from keras.losses import Loss
 
 
 class WeightedDiceLoss(Loss):
-    def __init__(self, weights, smooth=1, name='weighted_dice_loss'):
+    def __init__(self, weights, smooth=1e-6, name='weighted_dice_loss'):
         super().__init__(name=name)
         self.weights = weights
         self.smooth = smooth
@@ -37,39 +36,62 @@ class WeightedDiceLoss(Loss):
 
 
 # Configure the model for training.
-# We use the "sparse" version of categorical-crossentropy because our target data is integers.
-def train(model: keras.Model, args, train_gen: preprocessing.DataGen, val_gen: preprocessing.DataGen,
-          epochs: int = 25) -> None:
+def train(model: keras.Model, args, train_gen: preprocessing.DataGen, val_gen: preprocessing.DataGen, loss_name,
+          epochs: int = 25, warmup=False) -> None:
+    if loss_name == "focal":
+        loss = fc.SparseCategoricalFocalLoss(gamma=2.0, class_weight=[0.01, 0.1, 0.3, 0.75])
+    elif loss_name == "dice":
+        loss = WeightedDiceLoss(weights=[0.01, 0.1, 0.3, 1.0])
+    else:
+        loss = keras.losses.SparseCategoricalCrossentropy()
+
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=1e-4, clipnorm=0.001),
-                  loss=WeightedDiceLoss(weights=[0.5, 1.0, 2.0, 4.0]),
-                  metrics=[
-                      keras.metrics.IoU(name="iou", num_classes=4, target_class_ids=[0, 1, 2], sparse_y_pred=False),
-                      keras.metrics.IoU(name="iou_lights", num_classes=4, target_class_ids=[3], sparse_y_pred=False)
-                  ], jit_compile=False)
+                  loss=loss,
+                  metrics=[keras.metrics.MeanIoU(name="iou", num_classes=4, sparse_y_pred=False),
+                           keras.metrics.IoU(name="iou_lights", num_classes=4, target_class_ids=[3],
+                                             sparse_y_pred=False),
+                           tf.keras.metrics.SparseCategoricalAccuracy(name="scc")
+                           ])
 
     callbacks = [
         keras.callbacks.TensorBoard(log_dir="tensorboard_dc_" + args.decoder + "_" + args.backbone),
         keras.callbacks.ModelCheckpoint("segmentation_dc_" + args.decoder + "_" + args.backbone + ".h5",
                                         save_best_only=True),
         keras.callbacks.ReduceLROnPlateau(
-            monitor='iou_lights',
+            monitor='val_iou',
             factor=0.1,
-            patience=10,
+            patience=3,
             verbose=1,
             mode='max',
-            min_delta=0.05,
-            cooldown=0,
-            min_lr=1e-10
-        ), keras.callbacks.EarlyStopping(monitor="iou_lights", min_delta=0.001, patience=10, verbose=1,
-                                         mode="max", restore_best_weights=True, start_from_epoch=5)
+            min_delta=0.01,
+            cooldown=1
+        ), keras.callbacks.EarlyStopping(
+            monitor="val_iou",
+            min_delta=0.001,
+            patience=3,
+            verbose=1,
+            mode="max",
+            restore_best_weights=True,
+            start_from_epoch=3)
     ]
+    if warmup:
+        # train with higher learning rate for few epochs
+        model.fit(train_gen, epochs=2, validation_data=val_gen)
+        # recompile with smaller learning rate
+        model.compile(optimizer=keras.optimizers.Adam(learning_rate=1e-5, clipnorm=0.001),
+                      loss= loss,
+                      metrics=[keras.metrics.MeanIoU(name="iou", num_classes=4, sparse_y_pred=False),
+                               keras.metrics.IoU(name="iou_lights", num_classes=4, target_class_ids=[3],
+                                                 sparse_y_pred=False),
+                               tf.keras.metrics.SparseCategoricalAccuracy(name="scc")
+                               ], jit_compile=False)
 
     # Train the model, doing validation at the end of each epoch.
-    model.fit(train_gen, epochs=epochs, validation_data=val_gen, callbacks=callbacks, use_multiprocessing=True)
+    model.fit(train_gen, epochs=epochs, validation_data=val_gen, callbacks=callbacks)
 
 
 def display_mask(masks, original, save_dir):
-    """Quick utility to display a model's prediction.
+    """Quick utility to merge a model's prediction with expected results.
     :param original: input image
     :param masks: predictions
     :param save_dir: comparison file path
@@ -85,62 +107,58 @@ def display_mask(masks, original, save_dir):
         bg.paste(og, (0, 0))
         bg.paste(og_quad, (800, 0))
         bg.paste(img, (1600, 0))
-        bg.save(save_dir + original[0][i][19:])
+        bg.save(os.path.join(save_dir, os.path.basename(original[0][i])))
 
 
 def init(args):
     data_dir = args.input
-    out_dir = './images/train_result_dc_' + args.decoder + '_' + args.backbone + '/'
+    out_dir = './images/result_' + args.loss + '_' + args.decoder + '_' + args.backbone + '/'
     img_size = (512, 512)
     num_classes = 4
-    batch_size = 2
-    input_img_paths, target_img_paths = filter.load_dataset_images(data_dir)
+    batch_size = 5
+    input_img_paths, target_img_paths = preprocessing.load_dataset_images(data_dir)
 
-    print("Number of samples:", len(input_img_paths[0]))
+    print("Number of samples:", len(input_img_paths))
 
     # Free up RAM in case the model definition cells were run multiple times
     keras.backend.clear_session()
 
     # Build model
-    if args.backbone == "unet":
-        model = UNet.make_U_model(img_size, num_classes)
-        weight_name = "./segmentation.h5"
+    if args.decoder == "simple_unet":
+        model = UNet.simpleUnet(img_size, num_classes, args.backbone)
     else:
         if args.decoder == "linknet":
             model = sm.Linknet(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4,
                                activation='softmax')
-        elif args.decoder == "fpn":
-            model = sm.FPN(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax',
-                           pyramid_dropout=0.7)
-        elif args.decoder == "psp":
-            model = sm.PSPNet(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax',
-                              psp_dropout=0.5)
         elif args.decoder == "deeplab":
             model = DeepLab.DeeplabV3Plus(image_size=img_size[0], num_classes=4)
+        elif args.decoder == "fpn":
+            model = sm.FPN(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax',
+                           pyramid_dropout=0.3)
+        elif args.decoder == "psp":
+            model = sm.PSPNet(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax',
+                              psp_dropout=0.3)
         else:
             model = sm.Unet(backbone_name=args.backbone, input_shape=img_size + (3,), classes=4, activation='softmax')
-            '''base_model_input = model.input base_model_output = model.get_layer('decoder_stage4b_relu').output #add 
-            dropout base_model_output = keras.layers.Dropout(0.5)(base_model_output) output = keras.layers.Conv2D(
-            filters= num_classes, kernel_size=(3, 3), padding='same', use_bias=True, 
-            kernel_initializer='glorot_uniform', name='final_conv', activation = 'softmax')(base_model_output) model 
-            = keras.models.Model(base_model_input, output)'''
-        weight_name = "./segmentation_dc_" + args.decoder + "_" + args.backbone + ".h5"
+
+    weight_name = "./segmentation_" + args.loss + "_" + args.decoder + "_" + args.backbone + ".h5"
 
     if exists(weight_name):
         model.load_weights(weight_name)
 
-    train_gen, val_gen, val_paths = preprocessing.makeGens(input_img_paths, target_img_paths, batch_size, img_size,
-                                                           aug=args.augmentation)
+    train_gen, val_gen, test_gen, paths = preprocessing.makeGensv2(input_img_paths, target_img_paths, batch_size,
+                                                                   img_size, aug=args.augmentation)
+
     if args.train:
         model.summary()
-        train(model, args, train_gen, val_gen, epochs=args.epochs)
+        train(model, args, train_gen, val_gen, loss_name=args.loss, epochs=args.epochs, warmup=False)
 
-    val_preds = model.predict(val_gen)
+    preds = model.predict(test_gen)
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # Display mask predicted by our model
-    display_mask(val_preds, val_paths, out_dir)
+    # Combine mask predicted by our model
+    display_mask(preds, paths[2], out_dir)
 
 
 if __name__ == '__main__':
@@ -170,7 +188,7 @@ if __name__ == '__main__':
         type=int,
         metavar="epochs",
         default=15,
-        help="Number of epochs",
+        help="Max number of epochs",
     )
     parser.add_argument(
         "--backbone",
@@ -178,6 +196,13 @@ if __name__ == '__main__':
         metavar="encoder",
         default="mobilenetv2",
         help="Set backbone encoder",
+    )
+    parser.add_argument(
+        "--loss",
+        type=str,
+        metavar="loss",
+        default="dice",
+        help="Set loss function for training",
     )
 
     parser.add_argument(
@@ -194,4 +219,5 @@ if __name__ == '__main__':
         default=False,
         help="Toggle pipeline augmentation",
     )
+
     init(parser.parse_args())

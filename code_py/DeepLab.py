@@ -2,6 +2,8 @@ import tensorflow as tf
 from tensorflow import keras
 from keras import layers
 
+# from https://github.com/keras-team/keras-io/blob/master/examples/vision/deeplabv3_plus.py
+
 
 def convolution_block(
         block_input,

@@ -1,10 +1,15 @@
 from tensorflow import keras
 from keras import layers
-import Encoders
+from code_py import Encoders
 
+#based on https://keras.io/examples/vision/oxford_pets_image_segmentation/
 
-def make_U_model(img_size, num_classes):
-    inputs = keras.Input(shape=img_size + (4,))
+def simpleUnet(img_size, num_classes, backbone):
+
+    if backbone != "none":
+        return hybrid_UNet(img_size, num_classes, backbone)
+
+    inputs = keras.Input(shape=img_size + (3,))
 
     x = inputs
 
@@ -65,12 +70,13 @@ def make_U_model(img_size, num_classes):
 def hybrid_UNet(img_size: (int, int), num_classes: int, backbone):
     inputs = keras.Input(shape=img_size + (3,), name="input_image")
 
-    if backbone == "mobile":
+    if backbone == "mobilenetv2":
         skip_connection_names, encoder, encoder_output = Encoders.make_Mobile(inputs)
-    else:
+        f = [16, 32, 48, 64, 128]
+    else: #resnet
         skip_connection_names, encoder, encoder_output = Encoders.make_ResNet(inputs)
+        f = [16, 32, 48, 64]
 
-    f = [16, 32, 48, 64]
     x = encoder_output
     for i in range(1, len(skip_connection_names) + 1, 1):
         x_skip = encoder.get_layer(skip_connection_names[-i]).output
